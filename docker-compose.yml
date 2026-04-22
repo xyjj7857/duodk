@@ -1,0 +1,27 @@
+services:
+  trading-bot:
+    build: .
+    container_name: node49700
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - GATEKEEPER_KEY=${GATEKEEPER_KEY:-Xiemac123!}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-supernode-secret-key}
+      - NODE_OPTIONS=--max-old-space-size=512
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

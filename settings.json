@@ -1,0 +1,115 @@
+{
+  "binance": {
+    "apiKey": "oDQleHC2fKUyLORiNvYxDhbjMwd0tSJerZ16UpDeodVpftUt5rajHDac8f0qhPZX",
+    "secretKey": "APwIfMbrtqw3oo0Xi3xmm4JgyXepOI1m0GVAurggIyw0VWJ1hWU0QpXJ3e7Yxoes",
+    "baseUrl": "https://fapi.binance.com",
+    "wsUrl": "wss://fstream.binance.com/ws"
+  },
+  "scanner": {
+    "stage0": {
+      "interval": "1h",
+      "startTime": "00:35:00.000",
+      "klinePeriod": "15m",
+      "minKlines": 300,
+      "maxKlines": 115000,
+      "includeTradFi": false
+    },
+    "stage0P": {
+      "enabled": false,
+      "interval": "15m",
+      "startTime": "00:08:36.000",
+      "periods": {
+        "15m": {
+          "enabled": false,
+          "count": 7,
+          "threshold": -3
+        }
+      }
+    },
+    "stage1": {
+      "interval": "15m",
+      "startTime": "00:14:51.300",
+      "minVolumeM1": 200000,
+      "priceChangeK1": [
+        0,
+        100
+      ],
+      "whitelist": [],
+      "blacklist": []
+    },
+    "stage2": {
+      "interval": "15m",
+      "startTime": "00:14:59.600",
+      "cooldown": 0,
+      "conditions": {
+        "k2": {
+          "enabled": true,
+          "range": [
+            2,
+            7.85
+          ]
+        },
+        "a": {
+          "enabled": true,
+          "range": [
+            0,
+            2.3
+          ]
+        },
+        "m": {
+          "enabled": true,
+          "range": [
+            299000,
+            100000000
+          ]
+        },
+        "k5": {
+          "enabled": false,
+          "range": [
+            0.1,
+            1
+          ]
+        }
+      }
+    }
+  },
+  "order": {
+    "leverage": 5,
+    "positionRatio": 50,
+    "maxPosition": 40000,
+    "tpMode": "ratio",
+    "tpRatio": 45,
+    "tpFixed": 2,
+    "slMode": "fixed",
+    "slRatio": 85,
+    "slFixed": 3,
+    "mLinkEnabled": false,
+    "mLinkValue": 1800,
+    "positiveWindow": 0.7,
+    "maxHoldTime": 29.8,
+    "kBestPeriod": "15m",
+    "kBestWindow": [
+      1,
+      5
+    ]
+  },
+  "email": {
+    "enabled": true,
+    "sender": "",
+    "receiver": "",
+    "smtpServer": "",
+    "smtpPort": 465,
+    "password": "",
+    "minBalance": 5,
+    "maxConsecutiveLoss": 30000
+  },
+  "withdrawal": {
+    "withdrawalThreshold": 50,
+    "retentionThreshold": 46,
+    "alarmThreshold": 5
+  },
+  "auth": {
+    "username": "admin",
+    "password": "Xiemac123!"
+  }
+}
