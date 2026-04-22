@@ -332,23 +332,27 @@ export class StrategyEngine {
 
   private async manageMarketDataStreams() {
     const now = new Date(Date.now() + this.timeOffset);
-    const minute = now.getUTCMinutes();
+    const minute = now.getMinutes();
+    const second = now.getSeconds();
     
-    const currentMin = now.getMinutes();
-    
-    // 监测窗口：14-16, 29-31, 44-46, 59-01
-    const isPeak = [14, 15, 16, 29, 30, 31, 44, 45, 46, 59, 0, 1].includes(currentMin);
+    // Exact windows: 14:20-15:20, 29:20-30:20, 44:20-45:20, 59:20-00:20
+    const isPeak = (
+      (minute === 14 && second >= 20) || (minute === 15 && second <= 20) ||
+      (minute === 29 && second >= 20) || (minute === 30 && second <= 20) ||
+      (minute === 44 && second >= 20) || (minute === 45 && second <= 20) ||
+      (minute === 59 && second >= 20) || (minute === 0 && second <= 20)
+    );
 
     // Primary engine election
     if (!StrategyEngine.primaryWsEngineId || StrategyEngine.primaryWsEngineId === this.accountId) {
       StrategyEngine.primaryWsEngineId = this.accountId;
       
       if (isPeak && !this.isFullMarketMonitoring) {
-        this.addLog('WebSocket', `[主引擎] 进入窗口监测期 (${currentMin}分)，启动全市场行情订阅...`, 'info');
+        this.addLog('WebSocket', `[主引擎] 进入窗口监测期 (${minute}分${second}秒)，启动全市场行情订阅...`, 'info');
         await this.initMarketWs();
         this.isFullMarketMonitoring = true;
       } else if (!isPeak && (this.isFullMarketMonitoring || this.marketWss.length > 1 || (this.marketWss.length === 1 && !this.currentPosition))) {
-        this.addLog('WebSocket', `[主引擎] 离开窗口监测期 (${currentMin}分)，开启低带宽模式...`, 'info');
+        this.addLog('WebSocket', `[主引擎] 离开窗口监测期 (${minute}分${second}秒)，开启低带宽模式...`, 'info');
         this.switchToLowBandwidthMonitoring();
         this.isFullMarketMonitoring = false;
       }
@@ -359,10 +363,10 @@ export class StrategyEngine {
       if (activeSymbol && !this.isFullMarketMonitoring && this.marketWss.length === 0) {
         this.addLog('WebSocket', `[从引擎] 仅维持持仓币种 ${activeSymbol} 的 15m K线订阅`, 'info');
         this.createMarketConnection([activeSymbol.toLowerCase()], 0);
-      } else if (!activeSymbol && this.marketWss.length > 0) {
+      } else if (!activeSymbol && this.marketWss.length > 0 && !this.isFullMarketMonitoring) {
         this.addLog('WebSocket', '[从引擎] 当前无持仓，已关闭行情订阅', 'info');
         this.cleanupMarketWs();
-      } else if (this.isFullMarketMonitoring && this.marketWss.length > 1) {
+      } else if (this.isFullMarketMonitoring || this.marketWss.length > 1) {
         // Fallback cleanup if previously misconfigured
         this.addLog('WebSocket', '[从引擎] 清理全量监测连接...', 'info');
         this.switchToLowBandwidthMonitoring();
