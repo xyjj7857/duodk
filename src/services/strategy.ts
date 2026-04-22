@@ -8,7 +8,7 @@ import { APP_NAME, DEFAULT_SETTINGS } from '../constants';
 export class StrategyEngine {
   private binance: BinanceService;
   private settings: any;
-  private accountId: string;
+  public accountId: string;
   private logs: LogEntry[] = [];
   private tradeLogs: TradeLog[] = [];
   private transferLogs: TransferLog[] = [];
@@ -26,7 +26,8 @@ export class StrategyEngine {
   private lastS2Run: number = 0;
   private ws: WebSocket | null = null;
   private marketWss: WebSocket[] = [];
-  private klineCache: Map<string, any> = new Map();
+  private static globalKlineCache: Map<string, any> = new Map();
+  private static primaryWsEngineId: string | null = null;
   private listenKey: string | null = null;
   private keepAliveInterval: NodeJS.Timeout | null = null;
   private pingInterval: NodeJS.Timeout | null = null;
@@ -51,6 +52,7 @@ export class StrategyEngine {
   private closedPositionsHistory: Map<string, number> = new Map();
   private pendingCloseSymbols: Map<string, number> = new Map();
   private lastReplenishmentEmailTime: number = 0;
+  private balanceAlertSent: boolean = false;
   private isWithdrawing: boolean = false;
   private lastAccountFetchTime: number = 0;
   private lastApiCheckTime: number = 0;
@@ -102,14 +104,14 @@ export class StrategyEngine {
     if (this.externalMarketSource) {
       return this.externalMarketSource.getKline(symbol);
     }
-    return this.klineCache.get(symbol);
+    return StrategyEngine.globalKlineCache.get(symbol);
   }
 
   private hasCachedKline(symbol: string) {
     if (this.externalMarketSource) {
       return this.externalMarketSource.getKline(symbol) !== undefined;
     }
-    return this.klineCache.has(symbol);
+    return StrategyEngine.globalKlineCache.has(symbol);
   }
 
   private addLog(module: string, message: string, type: LogEntry['type'] = 'info', details?: any) {
@@ -301,6 +303,11 @@ export class StrategyEngine {
       clearTimeout(this.fetchAccountTimer);
       this.fetchAccountTimer = null;
     }
+    
+    if (StrategyEngine.primaryWsEngineId === this.accountId) {
+      StrategyEngine.primaryWsEngineId = null;
+    }
+    
     this.addLog('系统', '策略引擎停止', 'warning');
   }
 
@@ -325,23 +332,42 @@ export class StrategyEngine {
 
   private async manageMarketDataStreams() {
     const now = new Date(Date.now() + this.timeOffset);
-    const minute = now.getUTCMinutes(); // Beijing Time (UTC+8) calculation uses now.getTime() + 8h in other places, but here we just need relative minutes
+    const minute = now.getUTCMinutes();
     
-    // 北京时间与 UTC 时间的分秒是同步的，所以直接用 getMinutes() 即可
     const currentMin = now.getMinutes();
     
     // 监测窗口：14-16, 29-31, 44-46, 59-01
     const isPeak = [14, 15, 16, 29, 30, 31, 44, 45, 46, 59, 0, 1].includes(currentMin);
 
-    if (isPeak && !this.isFullMarketMonitoring) {
-      this.addLog('WebSocket', `进入窗口监测期 (${currentMin}分)，启动全市场行情订阅...`, 'info');
-      await this.initMarketWs();
-      this.isFullMarketMonitoring = true;
-    } else if (!isPeak && (this.isFullMarketMonitoring || this.marketWss.length > 1 || (this.marketWss.length === 1 && !this.currentPosition))) {
-      // 只有在非窗口期，且处于“全量监测”或者连接数异常时，才切换回低带宽模式
-      this.addLog('WebSocket', `离开窗口监测期 (${currentMin}分)，开启低带宽模式...`, 'info');
-      this.switchToLowBandwidthMonitoring();
-      this.isFullMarketMonitoring = false;
+    // Primary engine election
+    if (!StrategyEngine.primaryWsEngineId || StrategyEngine.primaryWsEngineId === this.accountId) {
+      StrategyEngine.primaryWsEngineId = this.accountId;
+      
+      if (isPeak && !this.isFullMarketMonitoring) {
+        this.addLog('WebSocket', `[主引擎] 进入窗口监测期 (${currentMin}分)，启动全市场行情订阅...`, 'info');
+        await this.initMarketWs();
+        this.isFullMarketMonitoring = true;
+      } else if (!isPeak && (this.isFullMarketMonitoring || this.marketWss.length > 1 || (this.marketWss.length === 1 && !this.currentPosition))) {
+        this.addLog('WebSocket', `[主引擎] 离开窗口监测期 (${currentMin}分)，开启低带宽模式...`, 'info');
+        this.switchToLowBandwidthMonitoring();
+        this.isFullMarketMonitoring = false;
+      }
+    } else {
+      // Secondary engine logic
+      const activeSymbol = this.currentPosition?.symbol;
+      
+      if (activeSymbol && !this.isFullMarketMonitoring && this.marketWss.length === 0) {
+        this.addLog('WebSocket', `[从引擎] 仅维持持仓币种 ${activeSymbol} 的 15m K线订阅`, 'info');
+        this.createMarketConnection([activeSymbol.toLowerCase()], 0);
+      } else if (!activeSymbol && this.marketWss.length > 0) {
+        this.addLog('WebSocket', '[从引擎] 当前无持仓，已关闭行情订阅', 'info');
+        this.cleanupMarketWs();
+      } else if (this.isFullMarketMonitoring && this.marketWss.length > 1) {
+        // Fallback cleanup if previously misconfigured
+        this.addLog('WebSocket', '[从引擎] 清理全量监测连接...', 'info');
+        this.switchToLowBandwidthMonitoring();
+        this.isFullMarketMonitoring = false;
+      }
     }
   }
 
@@ -366,7 +392,6 @@ export class StrategyEngine {
       }
     });
     this.marketWss = [];
-    this.klineCache.clear();
   }
 
   private async initMarketWs() {
@@ -552,7 +577,7 @@ export class StrategyEngine {
           const k = msg.k;
           const price = parseFloat(k.c);
           // 统一存入共享缓存 Map
-          this.klineCache.set(symbol, {
+          StrategyEngine.globalKlineCache.set(symbol, {
             open: parseFloat(k.o),
             close: price,
             high: parseFloat(k.h),
@@ -1118,9 +1143,14 @@ export class StrategyEngine {
       const threshold = this.settings.withdrawal.alarmThreshold;
       const emailEnabled = true; // 默认开启
       if (emailEnabled && balance < threshold) {
-        this.addLog('系统', `余额提醒: 当前总余额 (${balance}) 低于设定阈值 (${threshold})`, 'warning');
-        this.addLog('邮件', `准备发送余额提醒邮件至: yyb_cq@outlook.com`, 'info');
-        await this.sendEmail('余额提醒', `当前总余额 (${balance.toFixed(2)}) 低于设定阈值 (${threshold})，请注意。`);
+        if (!this.balanceAlertSent) {
+          this.balanceAlertSent = true;
+          this.addLog('系统', `余额提醒: 当前总余额 (${balance}) 低于设定阈值 (${threshold})`, 'warning');
+          this.addLog('邮件', `准备发送余额提醒邮件至: yyb_cq@outlook.com`, 'info');
+          await this.sendEmail('余额提醒', `当前总余额 (${balance.toFixed(2)}) 低于设定阈值 (${threshold})，请注意。`);
+        }
+      } else if (balance >= threshold) {
+        this.balanceAlertSent = false;
       }
 
       // 孤立资源清理逻辑 (Orphan Cleanup)

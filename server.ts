@@ -337,11 +337,14 @@ async function startServer() {
   app.get("/api/accounts", async (req, res) => {
     try {
       const globalSettings = await loadSettings();
-      const accountList = globalSettings.accounts.map(acc => ({
-        id: acc.id,
-        name: acc.name,
-        enabled: acc.enabled && engines.has(acc.id)
-      }));
+      const accountList = globalSettings.accounts.map(acc => {
+        const engine = engines.get(acc.id);
+        return {
+          id: acc.id,
+          name: acc.name,
+          enabled: engine ? engine.getSystemStatus().isRunning : false
+        };
+      });
       res.json(accountList);
     } catch (error: any) {
       res.status(500).json({ success: false, message: error.message });
@@ -374,13 +377,25 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.post("/api/engine/start", engineMiddleware, (req: any, res) => {
+  app.post("/api/engine/start", engineMiddleware, async (req: any, res) => {
     req.engine.start();
+    const globalSettings = await loadSettings();
+    const acc = globalSettings.accounts.find((a: any) => a.id === req.engine.accountId);
+    if (acc) {
+      acc.enabled = true;
+      await saveGlobalSettings(globalSettings);
+    }
     res.json({ success: true, isRunning: true });
   });
 
-  app.post("/api/engine/stop", engineMiddleware, (req: any, res) => {
+  app.post("/api/engine/stop", engineMiddleware, async (req: any, res) => {
     req.engine.stop();
+    const globalSettings = await loadSettings();
+    const acc = globalSettings.accounts.find((a: any) => a.id === req.engine.accountId);
+    if (acc) {
+      acc.enabled = false;
+      await saveGlobalSettings(globalSettings);
+    }
     res.json({ success: true, isRunning: false });
   });
 

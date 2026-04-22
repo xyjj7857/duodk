@@ -110,7 +110,8 @@ export default function App() {
   useEffect(() => {
     if (!selectedAccountId) return;
     
-    document.title = (settings.appName || APP_NAME) + (selectedAccountId ? ` - ${selectedAccountId}` : '');
+    const selectedAccountName = accounts.find(a => a.id === selectedAccountId)?.name || selectedAccountId;
+    document.title = (settings.appName || APP_NAME) + (selectedAccountName ? ` - ${selectedAccountName}` : '');
     let ws: WebSocket | null = null;
     let reconnectTimeout: NodeJS.Timeout;
 
