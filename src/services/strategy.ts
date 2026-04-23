@@ -780,10 +780,34 @@ export class StrategyEngine {
       }
       
       // 优化：只有在订单完全成交 (FILLED) 时才触发清理逻辑，减少密集成交时的 API 开销
-      // 使用防抖处理，避免部分成交时的请求风暴
+      // Scheme 2: 在内存中直接映射状态，对 UI 更新，大幅度消减 REST API 热盲查风暴
+      if (this.accountData && this.accountData.openOrders) {
+        const idx = this.accountData.openOrders.findIndex((ord: any) => ord.orderId === (order ? order.i : undefined));
+        if (order && ['FILLED', 'CANCELED', 'REJECTED', 'EXPIRED'].includes(order.X)) {
+          if (idx >= 0) this.accountData.openOrders.splice(idx, 1);
+        } else if (order && idx >= 0) {
+          const oo = this.accountData.openOrders[idx];
+          oo.status = order.X;
+          oo.executedQty = order.z;
+        }
+        if (this.onUpdate) this.onUpdate('account', this.accountData);
+      }
+      
+      // 使用拉长防抖处理，由原有 800ms 放大至 3000ms，以内存状态推送为主，REST兜底为辅
       this.fetchAccountDataDebounced({ skipCleanup: !isFilled }); 
     } else if (event.e === 'ACCOUNT_UPDATE') {
+      // Scheme 2: 内存中直接覆盖最新余额和持仓变化
+      if (this.accountData && event.a && event.a.B) {
+        const usdt = event.a.B.find((b: any) => b.a === 'USDT');
+        if (usdt) {
+          this.accountData.totalBalance = usdt.wb;
+          this.accountData.availableBalance = usdt.cw;
+          if (this.onUpdate) this.onUpdate('account', this.accountData);
+        }
+      }
+      
       this.addLog('账户', '收到账户更新推送', 'info');
+      // 依靠长防抖统一验证对账
       this.fetchAccountDataDebounced({ skipCleanup: true });
     } else if (event.e === 'listenKeyExpired') {
       this.addLog('WebSocket', 'ListenKey 已过期，正在重新连接...', 'warning');
@@ -808,7 +832,7 @@ export class StrategyEngine {
       this.fetchAccountOptions = {}; // 重置
       this.fetchAccountTimer = null;
       this.fetchAccountData(finalOptions);
-    }, 800); // 800ms 防抖，足以覆盖密集成交期
+    }, 3000); // 防抖调整至 3000ms：由方案二 WebSocket 内存同步保障实时性，缩小 REST 查证密集度
   }
 
   private async confirmPositionClosed(symbol: string, exitPrice?: number, exitTime?: number) {
@@ -947,18 +971,18 @@ export class StrategyEngine {
       this.isBanned = false;
     }
     
-    // 强制刷新频率限制：1秒内最多请求一次物理 API
+    // 强制刷新频率限制：放宽至 2000 毫秒，避免突发事件击穿
     const now = Date.now();
-    if (now - this.lastAccountFetchTime < 1000) {
+    if (now - this.lastAccountFetchTime < 2000) {
       return;
     }
     this.lastAccountFetchTime = now;
 
     try {
-      const [account, positions, openOrders, spotAccount] = await Promise.all([
+      // Scheme 1 首层并发解耦: 将高权重(40)的全局 getOpenOrders() 移出必然调用，仅获取低权重(5)资产和持仓
+      const [account, positions, spotAccount] = await Promise.all([
         this.binance.getAccountInfo(),
         this.binance.getPositionRisk(),
-        this.binance.getOpenOrders(),
         this.binance.getSpotAccountInfo()
       ]);
 
@@ -1035,25 +1059,39 @@ export class StrategyEngine {
 
       this.previousPositions = activePositions;
 
-      // 优化：针对有持仓的币种，显式获取一次挂单，确保不遗漏 (部分账户全局查询可能不全)
-      let allOpenOrders = [...openOrders];
-      if (activePositions.length > 0) {
-        try {
-          const symbolOrdersPromises = activePositions.map(p => this.binance.getOpenOrders(p.symbol));
-          const symbolOrdersResults = await Promise.all(symbolOrdersPromises);
-          symbolOrdersResults.forEach(res => {
-            if (Array.isArray(res)) {
-              res.forEach(o => {
-                if (!allOpenOrders.find(ao => ao.orderId === o.orderId)) {
-                  allOpenOrders.push(o);
-                }
-              });
-            }
-          });
-        } catch (e) {
-          this.addLog('账户', '显式同步币种订单失败，使用全局数据', 'warning');
+      // Scheme 1 定向查询: 针对持仓币种和缓存已知币种，显式精准获取挂单(单币种权重由40降维至1)
+      let openOrders: any[] = [];
+      const fetchCounter = (this as any)._fetchCounter || 0;
+      (this as any)._fetchCounter = fetchCounter + 1;
+
+      // 兜底重置机制：每15次主动轮询(或首次无数据)执行1次强对账全局查(权重40)
+      if (fetchCounter % 15 === 0 || !this.accountData?.openOrders) {
+        openOrders = await this.binance.getOpenOrders();
+      } else {
+        const activeSyms = new Set<string>();
+        // 1. 获取现有持仓对应币种
+        activePositions.forEach((p:any) => activeSyms.add(p.symbol));
+        // 2. 获取内存遗留挂单对应币种
+        if (this.accountData && this.accountData.openOrders) {
+           this.accountData.openOrders.forEach((o:any) => activeSyms.add(o.symbol));
+        }
+        // 3. 可能正在开仓的主币种
+        if (this.pendingOrderSymbol) activeSyms.add(this.pendingOrderSymbol);
+        
+        if (activeSyms.size > 0) {
+           try {
+             // 多个目标币种并行精确查询
+             const oPromises = Array.from(activeSyms).map(sym => this.binance.getOpenOrders(sym));
+             const oResults = await Promise.all(oPromises);
+             openOrders = oResults.flat();
+           } catch (e) {
+             this.addLog('账户', '定向获取委托单失败，将切换全局获取', 'warning');
+             openOrders = await this.binance.getOpenOrders();
+           }
         }
       }
+
+      let allOpenOrders = [...openOrders];
 
       // 尝试获取 Algo 订单，如果失败则忽略 (部分 API 可能不支持)
       let algoOrders: any[] = [];
@@ -1440,8 +1478,8 @@ export class StrategyEngine {
           await this.checkPositionTimeout();
         }
         
-        // 动态轮询频率：有仓位 5 秒一次，无仓位 60 秒一次 (作为 WebSocket 的二级防御)
-        const pollInterval = hasPosition ? 5000 : 60000;
+        // 动态轮询频率(方案2补充保障)：有仓位延缓至 15 秒一次，无仓位 60 秒一次 (主业务响应现已交由 WebSocket 实时触发无缝衔接)
+        const pollInterval = hasPosition ? 15000 : 60000;
         if (now - this.lastAccountFetchTime > pollInterval) {
           this.fetchAccountData();
         }
