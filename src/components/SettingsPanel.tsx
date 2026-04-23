@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AppSettings } from '../types';
-import { Save, Shield, Search, ShoppingCart, Mail, Database, Zap, Clock, Activity, RotateCcw, RefreshCw, User, Plus, Trash2 } from 'lucide-react';
+import { Save, Shield, Search, ShoppingCart, Mail, Database, Zap, Clock, Activity, RotateCcw, RefreshCw, User, Plus, Trash2, Play, Pause } from 'lucide-react';
 import { DEFAULT_SETTINGS } from '../constants';
 
 export default function SettingsPanel({ 
@@ -18,6 +18,7 @@ export default function SettingsPanel({
   onRestore: () => void;
   onAddAccount: () => void;
   onDeleteAccount: (id: string) => void;
+  onToggleAccount: (id: string, currentlyEnabled: boolean) => void;
   accounts: any[];
   key?: any 
 }) {
@@ -159,17 +160,30 @@ export default function SettingsPanel({
                       <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${acc.enabled ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-500'}`}>
                         {acc.enabled ? '运行中' : '已停用'}
                       </div>
-                      <button 
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          onDeleteAccount(acc.id);
-                        }}
-                        className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                        title="删除账户"
-                      >
-                        <Trash2 size={20} />
-                      </button>
+                      <div className="flex gap-1">
+                        <button 
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onToggleAccount(acc.id, acc.enabled);
+                          }}
+                          className={`p-2 rounded-xl transition-all ${acc.enabled ? 'text-amber-500 hover:bg-amber-50' : 'text-emerald-500 hover:bg-emerald-50'}`}
+                          title={acc.enabled ? "暂停账户" : "启动账户"}
+                        >
+                          {acc.enabled ? <Pause size={20} /> : <Play size={20} />}
+                        </button>
+                        <button 
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onDeleteAccount(acc.id);
+                          }}
+                          className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                          title="删除账户"
+                        >
+                          <Trash2 size={20} />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}

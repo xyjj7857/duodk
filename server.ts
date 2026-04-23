@@ -252,14 +252,37 @@ async function startServer() {
 
   // Initialize Strategy Engines
   console.log("Initializing Strategy Engines...");
-  const bootSettings = await loadSettings();
+  let bootSettings = await loadSettings();
+  
+  // MIGRATION: Ensure 3 default accounts exist if currently only "default" is setup
+  if (bootSettings.accounts.length === 1 && bootSettings.accounts[0].id === "default") {
+    console.log("Migration: Expanding default setup to 3 accounts...");
+    const baseAcc = bootSettings.accounts[0];
+    
+    // Perform deep copy to prevent shared object references in settings
+    const acc2 = JSON.parse(JSON.stringify(baseAcc));
+    acc2.id = "acc_2";
+    acc2.name = "账户2";
+    acc2.enabled = true;
+    acc2.binance.apiKey = '';
+    acc2.binance.secretKey = '';
+    
+    const acc3 = JSON.parse(JSON.stringify(baseAcc));
+    acc3.id = "acc_3";
+    acc3.name = "账户3";
+    acc3.enabled = true;
+    acc3.binance.apiKey = '';
+    acc3.binance.secretKey = '';
+
+    bootSettings.accounts = [ baseAcc, acc2, acc3 ];
+    await saveGlobalSettings(bootSettings);
+  }
+
   const engines: Map<string, StrategyEngine> = new Map();
   
   let primaryAccountId: string | null = null;
   
   for (const account of bootSettings.accounts) {
-    if (!account.enabled) continue;
-    
     // Construct individual settings for this engine
     const engineSettings: any = {
       ...account,
@@ -291,6 +314,37 @@ async function startServer() {
       }
     }
   }
+
+  // Stagger start for all defined accounts automatically
+  (async () => {
+    let settingsUpdated = false;
+    const accountIds = Array.from(engines.keys());
+    for (let i = 0; i < accountIds.length; i++) {
+      const accountId = accountIds[i];
+      const engine = engines.get(accountId);
+      if (engine) {
+        const accDef = bootSettings.accounts.find(a => a.id === accountId);
+        
+        // ONLY start the engine automatically if the account is currently enabled.
+        if (accDef && accDef.enabled) {
+          console.log(`Starting engine for account [${accountId}] (${i+1}/${accountIds.length})...`);
+          engine.start().catch((err: any) => console.error(`[${accountId}] failed to start:`, err));
+
+          // 5 seconds delay before starting the NEXT account
+          if (i < accountIds.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          }
+        } else {
+          console.log(`Account [${accountId}] is disabled. Skipping auto-start.`);
+        }
+      }
+    }
+    
+    // Save updated enabled states if changed
+    if (settingsUpdated) {
+      await saveGlobalSettings(bootSettings);
+    }
+  })();
 
   const getEngine = (req: express.Request): StrategyEngine | undefined => {
     const accountId = (req.query.accountId as string || req.headers['x-account-id'] as string || '').trim();
@@ -515,7 +569,10 @@ async function startServer() {
         });
       }
       
-      engine.start().catch(err => console.error(`[${newId}] failed to start:`, err));
+      // Delay 5 seconds before starting a newly added account, to be consistent with the 5s staggered rule.
+      setTimeout(() => {
+        engine.start().catch(err => console.error(`[${newId}] failed to start:`, err));
+      }, 5000);
       
       engine.setUpdateCallback((type, data) => {
         const message = JSON.stringify({ accountId: newId, type, data });

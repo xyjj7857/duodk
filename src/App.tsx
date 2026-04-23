@@ -373,6 +373,27 @@ export default function App() {
     }
   };
 
+  const handleToggleAccountActivity = async (id: string, currentlyEnabled: boolean) => {
+    try {
+      const endpoint = currentlyEnabled ? '/api/engine/stop' : '/api/engine/start';
+      const res = await fetch(`${endpoint}?accountId=${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchAccounts();
+        if (id === selectedAccountId) {
+          setStatus(prev => ({ ...prev, isRunning: data.isRunning }));
+        }
+      } else {
+        alert('操作失败: ' + data.message);
+      }
+    } catch (err) {
+      console.error('Toggle account activity error:', err);
+    }
+  };
+
   const handleModuleUnlock = (e: React.FormEvent) => {
     e.preventDefault();
     if (modulePassword === "Sunbin7857#") {
@@ -686,6 +707,7 @@ export default function App() {
                     onRestore={handleRestoreDefaults}
                     onAddAccount={handleAddAccount}
                     onDeleteAccount={handleDeleteAccount}
+                    onToggleAccount={handleToggleAccountActivity}
                     accounts={accounts}
                   />
                 </ProtectedRoute>
