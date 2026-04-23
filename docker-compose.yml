@@ -1,10 +1,10 @@
 services:
   trading-bot:
     build: .
-    container_name: node49700
+    container_name: MultiDKD
     restart: always
     ports:
-      - "3000:3000"
+      - "3333:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
