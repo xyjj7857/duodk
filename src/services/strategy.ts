@@ -70,6 +70,7 @@ export class StrategyEngine {
   private lockingSymbols: Set<string> = new Set();
   private notifiedDustSymbols: Set<string> = new Set();
   private isFullMarketMonitoring: boolean = false;
+  private lastSubscribedSymbolSet: Set<string> = new Set();
   private onUpdate?: (type: 'log' | 'status' | 'account' | 'logs' | 'tradeLogs' | 'transferLogs' | 'balanceLogs' | 'settings', data: any) => void;
 
   private externalMarketSource?: {
@@ -344,47 +345,66 @@ export class StrategyEngine {
     );
 
     // Primary engine election
-    if (!StrategyEngine.primaryWsEngineId || StrategyEngine.primaryWsEngineId === this.accountId) {
+    const isPrimary = !StrategyEngine.primaryWsEngineId || StrategyEngine.primaryWsEngineId === this.accountId;
+    if (isPrimary) {
       StrategyEngine.primaryWsEngineId = this.accountId;
-      
-      if (isPeak && !this.isFullMarketMonitoring) {
+    }
+
+    // Determine target symbols for low-bandwidth mode
+    // Collect all unique active continuous contract symbols
+    const activeSymbols = new Set<string>();
+    if (this.accountData?.positions) {
+      this.accountData.positions.forEach((p: any) => {
+        if (p.symbol) activeSymbols.add(p.symbol.toLowerCase());
+      });
+    }
+    if (this.currentPosition?.symbol) {
+      activeSymbols.add(this.currentPosition.symbol.toLowerCase());
+    }
+    const targetSymbols = Array.from(activeSymbols);
+
+    if (isPrimary && isPeak) {
+      if (!this.isFullMarketMonitoring) {
         this.addLog('WebSocket', `[主引擎] 进入窗口监测期 (${minute}分${second}秒)，启动全市场行情订阅...`, 'info');
         await this.initMarketWs();
         this.isFullMarketMonitoring = true;
-      } else if (!isPeak && (this.isFullMarketMonitoring || this.marketWss.length > 1 || (this.marketWss.length === 1 && !this.currentPosition))) {
-        this.addLog('WebSocket', `[主引擎] 离开窗口监测期 (${minute}分${second}秒)，开启低带宽模式...`, 'info');
-        this.switchToLowBandwidthMonitoring();
-        this.isFullMarketMonitoring = false;
+        this.lastSubscribedSymbolSet = new Set(); // Reset low-band tracker
       }
     } else {
-      // Secondary engine logic
-      const activeSymbol = this.currentPosition?.symbol;
-      
-      if (activeSymbol && !this.isFullMarketMonitoring && this.marketWss.length === 0) {
-        this.addLog('WebSocket', `[从引擎] 仅维持持仓币种 ${activeSymbol} 的 15m K线订阅`, 'info');
-        this.createMarketConnection([activeSymbol.toLowerCase()], 0);
-      } else if (!activeSymbol && this.marketWss.length > 0 && !this.isFullMarketMonitoring) {
-        this.addLog('WebSocket', '[从引擎] 当前无持仓，已关闭行情订阅', 'info');
-        this.cleanupMarketWs();
-      } else if (this.isFullMarketMonitoring || this.marketWss.length > 1) {
-        // Fallback cleanup if previously misconfigured
-        this.addLog('WebSocket', '[从引擎] 清理全量监测连接...', 'info');
-        this.switchToLowBandwidthMonitoring();
+      // Secondary engine logic or non-peak primary
+      if (this.isFullMarketMonitoring) {
+        this.addLog('WebSocket', `${isPrimary ? '[主引擎]' : '[从引擎]'} 离开窗口监测期 (${minute}分${second}秒)，开启低带宽模式...`, 'info');
+        this.switchToLowBandwidthMonitoring(targetSymbols);
         this.isFullMarketMonitoring = false;
+      } else {
+        // Compare current active symbols with last subscribed
+        const setsEqual = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every(value => b.has(value));
+        
+        if (!setsEqual(this.lastSubscribedSymbolSet, activeSymbols) || (activeSymbols.size > 0 && this.marketWss.length === 0)) {
+          if (activeSymbols.size > 0) {
+            this.addLog('WebSocket', `[行情同步] 持仓变动，更新订阅: [${targetSymbols.join(', ')}]`, 'info');
+            this.switchToLowBandwidthMonitoring(targetSymbols);
+          } else if (this.marketWss.length > 0) {
+            this.addLog('WebSocket', '[行情同步] 当前无持仓，关闭行情订阅', 'info');
+            this.cleanupMarketWs();
+            this.lastSubscribedSymbolSet = new Set();
+          }
+        }
       }
     }
   }
 
-  private switchToLowBandwidthMonitoring() {
-    const activeSymbol = this.currentPosition?.symbol;
+  private switchToLowBandwidthMonitoring(symbols: string[]) {
     this.cleanupMarketWs();
     this.isFullMarketMonitoring = false;
     
-    if (activeSymbol) {
-      this.addLog('WebSocket', `低带宽模式：仅维持持仓币种 ${activeSymbol} 的 15m K线订阅`, 'info');
-      this.createMarketConnection([activeSymbol.toLowerCase()], 0);
+    if (symbols.length > 0) {
+      this.addLog('WebSocket', `低带宽模式：仅维持持仓币种 [${symbols.join(', ')}] 的 15m K线订阅`, 'info');
+      this.createMarketConnection(symbols, 0);
+      this.lastSubscribedSymbolSet = new Set(symbols);
     } else {
-      this.addLog('WebSocket', '低带宽模式：当前无持仓，已关闭全市场行情订阅', 'info');
+      this.addLog('WebSocket', '低带宽模式：当前无持仓，已关闭行情订阅', 'info');
+      this.lastSubscribedSymbolSet = new Set();
     }
   }
 
@@ -1032,28 +1052,37 @@ export class StrategyEngine {
         }
       });
 
+      const symbolsToCheck = new Set(this.previousPositions.map((p: any) => p.symbol as string));
+      for (const sym of this.pendingCloseSymbols.keys()) {
+        symbolsToCheck.add(sym);
+      }
+      // 检查内存中仍然标记为 OPEN 的记录，防止因重启或断联遗漏平仓状态
+      this.tradeLogs.filter(t => t.status === 'OPEN').forEach(t => {
+        symbolsToCheck.add(t.symbol);
+      });
+
       // 检测仓位关闭 (通过轮询发现)
-      this.previousPositions.forEach(async prev => {
-        const current = activePositions.find(p => p.symbol === prev.symbol);
+      symbolsToCheck.forEach(async symbol => {
+        const current = activePositions.find((p: any) => p.symbol === symbol);
         if (!current) {
           // 1. 检查冷静期：新开仓 5 秒内不判定消失
-          const openTrade = this.tradeLogs.find(t => t.symbol === prev.symbol && t.status === 'OPEN');
+          const openTrade = this.tradeLogs.find(t => t.symbol === symbol && t.status === 'OPEN');
           if (openTrade) {
             const age = Date.now() - openTrade.openTime;
             if (age < 5000) {
-              this.addLog('系统', `检测到持仓消失但处于冷静期 (${(age/1000).toFixed(1)}s): ${prev.symbol}, 暂不判定平仓`, 'info');
+              this.addLog('系统', `检测到持仓消失但处于冷静期 (${(age/1000).toFixed(1)}s): ${symbol}, 暂不判定平仓`, 'info');
               return;
             }
           }
 
           // 2. 异步确认逻辑
-          const count = (this.pendingCloseSymbols.get(prev.symbol) || 0) + 1;
+          const count = (this.pendingCloseSymbols.get(symbol) || 0) + 1;
           if (count >= 2) {
-            this.addLog('系统', `持仓连续两次轮询为空，确认平仓: ${prev.symbol}`, 'warning');
-            this.confirmPositionClosed(prev.symbol);
+            this.addLog('系统', `持仓轮询为空确认完成，进行平仓: ${symbol}`, 'warning');
+            this.confirmPositionClosed(symbol);
           } else {
-            this.pendingCloseSymbols.set(prev.symbol, count);
-            this.addLog('系统', `检测到持仓消失，进入异步确认期 (第 ${count} 次): ${prev.symbol}`, 'info');
+            this.pendingCloseSymbols.set(symbol, count);
+            this.addLog('系统', `检测到持仓消失，进入异步确认期 (第 ${count} 次): ${symbol}`, 'info');
             // 缩短下一次刷新时间以加快确认
             setTimeout(() => this.fetchAccountData(), 2000);
           }
@@ -1449,7 +1478,8 @@ export class StrategyEngine {
 
         // 行情心跳检测：如果超过 15 秒没有收到任何行情推送，且有持仓，强制刷新一次账户数据
         if (hasPosition && now - this.lastMarketDataTime > 15000) {
-          this.addLog('WebSocket', '检测到行情推送停滞，强制刷新账户数据', 'warning');
+          // 这个既然是正常的，就不用在日志中展示了
+          // this.addLog('WebSocket', '检测到行情推送停滞，强制刷新账户数据', 'warning');
           this.lastMarketDataTime = now; // 重置计时，避免连续触发
           this.fetchAccountData();
         }
@@ -1663,9 +1693,9 @@ export class StrategyEngine {
       const log = this.tradeLogs.find(l => l.id === logId);
       if (!log) return;
 
-      // 优化：利用 startTime 限定查询范围，避免超出 50 条限制时漏掉平仓单（考虑到网络延迟容错，减去 2 秒）
+      // 优化：从开仓时间开始获取该币种的最大 1000 条成交记录，确保能同时涵盖开仓手续费和平仓明细
       const startTime = openTime > 2000 ? openTime - 2000 : undefined;
-      const trades = await this.binance.getUserTrades(symbol, 100, startTime);
+      const trades = await this.binance.getUserTrades(symbol, 1000, startTime);
       const relevantTrades = trades.filter((t: any) => t.time >= (openTime - 2000));
       
       if (relevantTrades.length === 0) {
@@ -1685,19 +1715,38 @@ export class StrategyEngine {
       // 确定平仓方向，做多开仓 BUY 对应 SELL 平仓，做空开仓 SELL 对应 BUY 平仓
       const closeSide = log.side === 'BUY' ? 'SELL' : 'BUY';
 
-      relevantTrades.forEach((t: any) => {
+      // 确保按照时间升序排列
+      relevantTrades.sort((a: any, b: any) => a.time - b.time);
+
+      let currentPositionSize = 0;
+      let hasOpened = false;
+
+      for (const t of relevantTrades) {
+        const qty = parseFloat(t.qty || '0');
+        
+        if (t.side === log.side) {
+          currentPositionSize += qty;
+          hasOpened = true;
+        } else if (t.side === closeSide) {
+          currentPositionSize -= qty;
+        }
+
         totalPnl += parseFloat(t.realizedPnl || '0');
         totalFee += parseFloat(t.commission || '0');
         
         // 寻找反向单作为平仓单
         if (t.side === closeSide) {
-          const qty = parseFloat(t.qty || '0');
           const price = parseFloat(t.price || '0');
           totalExitQty += qty;
           totalExitValue += qty * price;
           exitTime = Math.max(exitTime, t.time);
         }
-      });
+
+        // 以非常微小的阈值判定是否完全平仓，避免浮点数精度问题
+        if (hasOpened && currentPositionSize <= 0.0000001) {
+          break; // 当前周期计算完毕，退出循环（防止混合到下一次的交易记录中）
+        }
+      }
       
       // 优化：计算多笔分散平仓成交的加权平均平仓价
       let exitPrice = 0;
