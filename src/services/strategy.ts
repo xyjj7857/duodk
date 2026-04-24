@@ -1697,8 +1697,13 @@ export class StrategyEngine {
         return;
       }
 
-      const trades = await this.binance.getUserTrades(symbol, 50);
-      const relevantTrades = trades.filter((t: any) => t.time >= openTime);
+      const log = this.tradeLogs.find(l => l.id === logId);
+      if (!log) return;
+
+      // 优化：利用 startTime 限定查询范围，避免超出 50 条限制时漏掉平仓单（考虑到网络延迟容错，减去 2 秒）
+      const startTime = openTime > 2000 ? openTime - 2000 : undefined;
+      const trades = await this.binance.getUserTrades(symbol, 100, startTime);
+      const relevantTrades = trades.filter((t: any) => t.time >= (openTime - 2000));
       
       if (relevantTrades.length === 0) {
         // 如果没查到，可能是币安还没同步，10秒后重试
@@ -1709,21 +1714,33 @@ export class StrategyEngine {
 
       let totalPnl = 0;
       let totalFee = 0;
-      let exitPrice = 0;
       let exitTime = 0;
+      
+      let totalExitQty = 0;
+      let totalExitValue = 0;
+      
+      // 确定平仓方向，做多开仓 BUY 对应 SELL 平仓，做空开仓 SELL 对应 BUY 平仓
+      const closeSide = log.side === 'BUY' ? 'SELL' : 'BUY';
 
       relevantTrades.forEach((t: any) => {
         totalPnl += parseFloat(t.realizedPnl || '0');
         totalFee += parseFloat(t.commission || '0');
-        // 寻找反向单作为平仓价参考 (开仓是 BUY，平仓就是 SELL)
-        if (t.side === 'SELL') {
-          exitPrice = parseFloat(t.price);
-          exitTime = t.time;
+        
+        // 寻找反向单作为平仓单
+        if (t.side === closeSide) {
+          const qty = parseFloat(t.qty || '0');
+          const price = parseFloat(t.price || '0');
+          totalExitQty += qty;
+          totalExitValue += qty * price;
+          exitTime = Math.max(exitTime, t.time);
         }
       });
-
-      const log = this.tradeLogs.find(l => l.id === logId);
-      if (!log) return;
+      
+      // 优化：计算多笔分散平仓成交的加权平均平仓价
+      let exitPrice = 0;
+      if (totalExitQty > 0) {
+        exitPrice = totalExitValue / totalExitQty;
+      }
 
       const contractValue = log.amount * log.entryPrice;
       const profitRate = contractValue > 0 ? (totalPnl / contractValue) * 100 : 0;
