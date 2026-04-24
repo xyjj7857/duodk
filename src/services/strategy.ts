@@ -846,11 +846,20 @@ export class StrategyEngine {
       this.addLog('订单', `[最高] binance仓单成交完成 (确认平仓): ${symbol}`, 'success');
       
       try {
-        // 标记为已关闭，先用传入的价格或当前价格占位
+        // 优化方案：如果没有传入价格（如通过轮询检测到的平仓），先尝试同步获取当前价格作为占位，防止出现 --
+        let priceToUse = exitPrice;
+        if (!priceToUse) {
+          const currentPrice = await this.fetchCurrentPrice(symbol);
+          if (currentPrice !== '--') {
+            priceToUse = parseFloat(currentPrice);
+          }
+        }
+
+        // 标记为已关闭
         this.updateTradeLog(openTrade.id, {
           status: 'CLOSED',
           closeTime: exitTime || Date.now(),
-          exitPrice: exitPrice || openTrade.exitPrice
+          exitPrice: priceToUse || openTrade.exitPrice
         });
 
         // 3. 异步补全成交详情
@@ -979,11 +988,13 @@ export class StrategyEngine {
     this.lastAccountFetchTime = now;
 
     try {
-      // Scheme 1 首层并发解耦: 将高权重(40)的全局 getOpenOrders() 移出必然调用，仅获取低权重(5)资产和持仓
-      const [account, positions, spotAccount] = await Promise.all([
+      // 优化：全并发请求，极大缩短等待时间
+      const [account, positions, spotAccount, openOrders, openAlgoOrders] = await Promise.all([
         this.binance.getAccountInfo(),
         this.binance.getPositionRisk(),
-        this.binance.getSpotAccountInfo()
+        this.binance.getSpotAccountInfo(),
+        this.binance.getOpenOrders(),
+        this.binance.getOpenAlgoOrders().catch(() => []) // 容错处理
       ]);
 
       const activePositions = positions.filter((p: any) => {
@@ -1059,69 +1070,21 @@ export class StrategyEngine {
 
       this.previousPositions = activePositions;
 
-      // Scheme 1 定向查询: 针对持仓币种和缓存已知币种，显式精准获取挂单(单币种权重由40降维至1)
-      let openOrders: any[] = [];
-      const fetchCounter = (this as any)._fetchCounter || 0;
-      (this as any)._fetchCounter = fetchCounter + 1;
+      // 映射 Algo 订单到统一格式
+      const mappedAlgoOrders = (Array.isArray(openAlgoOrders) ? openAlgoOrders : (openAlgoOrders?.orders || openAlgoOrders?.data || []))
+        .map((o: any) => ({
+          ...o,
+          isAlgo: true,
+          algoId: o.algoId || o.orderId || o.strategyId,
+          orderId: o.algoId || o.orderId || o.strategyId,
+          origQty: o.quantity || o.origQty || o.totalQuantity,
+          price: o.price || '0',
+          stopPrice: o.stopPrice || o.triggerPrice || o.activationPrice,
+          type: o.algoType || o.strategyType || o.type || 'ALGO',
+          time: o.time || o.updateTime || o.createTime
+        }));
 
-      // 兜底重置机制：每15次主动轮询(或首次无数据)执行1次强对账全局查(权重40)
-      if (fetchCounter % 15 === 0 || !this.accountData?.openOrders) {
-        openOrders = await this.binance.getOpenOrders();
-      } else {
-        const activeSyms = new Set<string>();
-        // 1. 获取现有持仓对应币种
-        activePositions.forEach((p:any) => activeSyms.add(p.symbol));
-        // 2. 获取内存遗留挂单对应币种
-        if (this.accountData && this.accountData.openOrders) {
-           this.accountData.openOrders.forEach((o:any) => activeSyms.add(o.symbol));
-        }
-        // 3. 可能正在开仓的主币种
-        if (this.pendingOrderSymbol) activeSyms.add(this.pendingOrderSymbol);
-        
-        if (activeSyms.size > 0) {
-           try {
-             // 多个目标币种并行精确查询
-             const oPromises = Array.from(activeSyms).map(sym => this.binance.getOpenOrders(sym));
-             const oResults = await Promise.all(oPromises);
-             openOrders = oResults.flat();
-           } catch (e) {
-             this.addLog('账户', '定向获取委托单失败，将切换全局获取', 'warning');
-             openOrders = await this.binance.getOpenOrders();
-           }
-        }
-      }
-
-      let allOpenOrders = [...openOrders];
-
-      // 尝试获取 Algo 订单，如果失败则忽略 (部分 API 可能不支持)
-      let algoOrders: any[] = [];
-      try {
-        const algoData = await this.binance.getOpenAlgoOrders();
-        
-        // 深度兼容处理：币安 API 可能返回 { orders: [] } 或 { data: [] } 或直接返回数组 []
-        const ordersArray = Array.isArray(algoData) ? algoData : (algoData?.orders || algoData?.data || []);
-        
-        if (ordersArray.length > 0) {
-          algoOrders = ordersArray.map((o: any) => ({
-            ...o,
-            isAlgo: true,
-            algoId: o.algoId || o.orderId || o.strategyId, // 显式保存 algoId 用于撤单
-            orderId: o.algoId || o.orderId || o.strategyId, // 统一 ID 字段用于 UI
-            origQty: o.quantity || o.origQty || o.totalQuantity, // 映射数量字段
-            price: o.price || '0',
-            stopPrice: o.stopPrice || o.triggerPrice || o.activationPrice, // 映射触发价
-            type: o.algoType || o.strategyType || o.type || 'ALGO', // 优先识别 algoType 或 strategyType
-            time: o.time || o.updateTime || o.createTime
-          }));
-        }
-      } catch (e: any) {
-        // 记录错误以便排查权限或接口问题
-        if (e.status !== 404) {
-          this.addLog('账户', `获取 Algo 订单失败: ${e.message}`, 'error');
-        }
-      }
-
-      const combinedOrders = [...allOpenOrders, ...algoOrders];
+      const combinedOrders = [...openOrders, ...mappedAlgoOrders];
 
       // 幽灵仓单优化：有持仓但无任何委托单 (5秒检测)
       // 排除正在下单中的情况，以及 30 秒内新开的仓位

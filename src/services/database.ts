@@ -101,6 +101,12 @@ export class DatabaseService {
         )
       `);
 
+      // Add indexes for performance
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_trade_logs_accountId ON trade_logs(accountId)`);
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_transfer_logs_accountId ON transfer_logs(accountId)`);
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_balance_logs_accountId ON balance_logs(accountId)`);
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_trade_logs_openTime ON trade_logs(openTime)`);
+
       // Create index for faster searching
       this.db.exec(`CREATE INDEX IF NOT EXISTS idx_trade_logs_accountId ON trade_logs(accountId)`);
       this.db.exec(`CREATE INDEX IF NOT EXISTS idx_trade_logs_symbol ON trade_logs(symbol)`);

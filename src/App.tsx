@@ -118,45 +118,35 @@ export default function App() {
     const fetchInitialData = async () => {
       try {
         const query = `?accountId=${selectedAccountId}`;
-        const [statusRes, logsRes, tradeLogsRes, transferLogsRes, balanceLogsRes, ipRes, accountRes] = await Promise.all([
-          fetch(`/api/status${query}`),
-          fetch(`/api/logs${query}`),
-          fetch(`/api/trade-logs${query}`),
-          fetch(`/api/transfer-logs${query}`),
-          fetch(`/api/balance-logs${query}`),
-          fetch('/api/ip'),
-          fetch(`/api/account${query}`)
-        ]);
+        const response = await fetch(`/api/dashboard-all${query}`);
         
-        if (statusRes.status === 403) {
-          const data = await statusRes.json();
+        if (response.status === 403) {
+          const data = await response.json();
           if (data.gatekeeper) {
             setIsLocked(true);
             return;
           }
         }
 
-        const statusData = await statusRes.json();
-        const logsData = await logsRes.json();
-        const tradeLogsData = await tradeLogsRes.json();
-        const transferLogsData = await transferLogsRes.json();
-        const balanceLogsData = await balanceLogsRes.json();
-        const ipData = await ipRes.json();
-        const accountData = await accountRes.json();
+        if (!response.ok) {
+          throw new Error(`Fetch failed: ${response.statusText}`);
+        }
+
+        const allData = await response.json();
 
         setStatus(prev => ({
           ...prev,
-          wsConnected: statusData.wsConnected,
-          apiConnected: statusData.apiConnected,
+          wsConnected: allData.status.wsConnected,
+          apiConnected: allData.status.apiConnected,
           lastUpdate: Date.now(),
-          isRunning: statusData.isRunning,
-          serverIp: ipData.ip
+          isRunning: allData.status.isRunning,
+          serverIp: allData.ip?.ip || "获取中..."
         }));
-        setLogs(logsData);
-        setTradeLogs(tradeLogsData);
-        setTransferLogs(transferLogsData);
-        setBalanceLogs(balanceLogsData);
-        setAccount(accountData);
+        setLogs(allData.logs);
+        setTradeLogs(allData.tradeLogs);
+        setTransferLogs(allData.transferLogs);
+        setBalanceLogs(allData.balanceLogs);
+        setAccount(allData.account);
       } catch (error) {
         console.error('Initial fetch error:', error);
       }

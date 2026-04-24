@@ -416,6 +416,34 @@ async function startServer() {
     }
   });
 
+  app.get("/api/dashboard-all", engineMiddleware, async (req: any, res) => {
+    try {
+      const engine = req.engine;
+      const [status, logs, tradeLogs, transferLogs, balanceLogs, accountData, ip] = await Promise.all([
+        Promise.resolve(engine.getSystemStatus()),
+        Promise.resolve(engine.getLogs()),
+        Promise.resolve(engine.getTradeLogs()),
+        Promise.resolve(engine.getTransferLogs()),
+        dbService.getBalanceLogs(engine.accountId, 100),
+        Promise.resolve(engine.getAccountData()),
+        // Add a small cache or timeout for IP fetch to prevent blocking
+        Promise.resolve({ ip: "fetching..." }) 
+      ]);
+
+      res.json({
+        status,
+        logs,
+        tradeLogs,
+        transferLogs,
+        balanceLogs,
+        account: accountData,
+        ip
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
   app.get("/api/status", engineMiddleware, (req: any, res) => {
     res.json(req.engine.getSystemStatus());
   });
