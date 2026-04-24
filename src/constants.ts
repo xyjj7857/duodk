@@ -53,7 +53,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
           cooldown: 0,
           preferredMode: 'volume',
           conditions: {
-            k2: { enabled: true, range: [4, 8.85] },
+            k2: { enabled: true, range: [4, 8.9] },
             a: { 
               enabled: true, 
               mode: 'fixed', 
@@ -75,7 +75,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
         positionRatio: 50,
         maxPosition: 40000,
         tpMode: 'ratio',
-        tpRatio: 45,
+        tpRatio: 44,
         tpFixed: 2,
         tpEnabled: true,
         slMode: 'ratio',
@@ -85,19 +85,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
         mLinkEnabled: false,
         mLinkValue: 1800,
         positiveWindow: 0.7,
-        maxHoldTime: 120,
+        maxHoldTime: 95,
         kBestPeriod: "15m",
         kBestWindow: [1, 5],
       },
       withdrawal: {
-        withdrawalThreshold: 2088,
-        retentionThreshold: 1888,
+        withdrawalThreshold: 2008,
+        retentionThreshold: 1988,
         alarmThreshold: 5,
       },
     },
     {
       id: "1",
-      name: "4-9-7-20-pl",
+      name: "49720pl",
       enabled: true,
       binance: {
         apiKey: "yBd9wVfEmdS9LvS45HhhHsetcnbqTTclnwCvb9p40RmsQNX9MWOAyVuA6hU7kHIL",
@@ -143,14 +143,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
           cooldown: 0,
           preferredMode: 'volume',
           conditions: {
-            k2: { enabled: true, range: [4, 8.85] },
+            k2: { enabled: true, range: [4, 8.9] },
             a: { 
               enabled: true, 
               mode: 'fixed', 
               fixedRange: [0, 3],
               relativeRange: [0, 50]
             },
-            m: { enabled: true, range: [7000000, 100000000] },
+            m: { enabled: true, range: [6980000, 100000000] },
             k5: { enabled: false, range: [0.1, 1] },
           },
         },
@@ -187,7 +187,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     },
     {
       id: "2",
-      name: "4-9-7-20-p",
+      name: "49720p",
       enabled: true,
       binance: {
         apiKey: "RiSgQhhUL4WPCbO4qXAvR2NEkBitprjoAZtYXxpwnuryQl6CZ29qDF18hK0ecC7b",
@@ -233,7 +233,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
           cooldown: 0,
           preferredMode: 'volume',
           conditions: {
-            k2: { enabled: true, range: [4, 8.85] },
+            k2: { enabled: true, range: [4, 8.9] },
             a: { 
               enabled: true, 
               mode: 'fixed', 
@@ -255,7 +255,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
         positionRatio: 50,
         maxPosition: 40000,
         tpMode: 'ratio',
-        tpRatio: 45,
+        tpRatio: 42,
         tpFixed: 2,
         tpEnabled: true,
         slMode: 'ratio',
