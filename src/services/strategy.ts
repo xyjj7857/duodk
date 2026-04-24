@@ -1166,7 +1166,7 @@ export class StrategyEngine {
           return {
             ...p,
             entryValue: (Math.abs(amount) * entryPrice).toFixed(2),
-            currentPrice: kline ? kline.close : null
+            currentPrice: kline ? kline.close : (p.markPrice ? parseFloat(p.markPrice) : null)
           };
         }),
         openOrders: combinedOrders

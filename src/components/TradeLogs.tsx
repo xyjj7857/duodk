@@ -256,7 +256,13 @@ export default function TradeLogs({ tradeLogs, onClear, accountId }: { tradeLogs
                       {log.realA ? log.realA.toFixed(2) + '%' : '--'}
                     </td>
                     <td className="py-5 font-mono text-sm font-bold text-slate-700 whitespace-nowrap">{log.entryPrice}</td>
-                    <td className="py-5 font-mono text-sm font-bold text-slate-700 whitespace-nowrap">{log.exitPrice || '--'}</td>
+                    <td className="py-5 font-mono text-sm font-bold text-slate-700 whitespace-nowrap">
+                      {log.exitPrice ? (() => {
+                        const entryStr = log.entryPrice.toString();
+                        const decimals = entryStr.includes('.') ? entryStr.split('.')[1].length : 2;
+                        return Number(log.exitPrice).toFixed(decimals);
+                      })() : '--'}
+                    </td>
                     <td className={`py-5 font-mono text-sm font-bold whitespace-nowrap ${log.pnl > 0 ? 'text-emerald-600' : log.pnl < 0 ? 'text-red-600' : 'text-slate-700'}`}>
                       {log.pnl > 0 ? '+' : ''}{log.pnl.toFixed(4)}
                     </td>
