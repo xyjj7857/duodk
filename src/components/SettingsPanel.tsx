@@ -10,6 +10,7 @@ export default function SettingsPanel({
   onRestore,
   onAddAccount,
   onDeleteAccount,
+  onToggleAccount,
   accounts = []
 }: { 
   settings: AppSettings; 

@@ -15,7 +15,7 @@ export class BinanceService {
 
   async getServerTime(): Promise<number> {
     try {
-      const response = await axios.get(`${this.settings.baseUrl}/fapi/v1/time`);
+      const response = await axios.get(`${this.settings.baseUrl}/fapi/v1/time`, { timeout: 10000 });
       return response.data.serverTime;
     } catch (error: any) {
       console.error('Failed to fetch Binance server time:', error.message);
@@ -42,6 +42,7 @@ export class BinanceService {
       const response = await axios({
         method,
         url,
+        timeout: 10000,
         headers: {
           'X-MBX-APIKEY': this.settings.apiKey,
           'Content-Type': 'application/x-www-form-urlencoded'
