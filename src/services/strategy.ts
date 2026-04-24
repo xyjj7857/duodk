@@ -335,12 +335,12 @@ export class StrategyEngine {
     const minute = now.getMinutes();
     const second = now.getSeconds();
     
-    // Exact windows: 14:20-15:20, 29:20-30:20, 44:20-45:20, 59:20-00:20
+    // Exact windows: 14:00-15:20, 29:00-30:20, 44:00-45:20, 59:00-00:20
     const isPeak = (
-      (minute === 14 && second >= 20) || (minute === 15 && second <= 20) ||
-      (minute === 29 && second >= 20) || (minute === 30 && second <= 20) ||
-      (minute === 44 && second >= 20) || (minute === 45 && second <= 20) ||
-      (minute === 59 && second >= 20) || (minute === 0 && second <= 20)
+      (minute === 14) || (minute === 15 && second <= 20) ||
+      (minute === 29) || (minute === 30 && second <= 20) ||
+      (minute === 44) || (minute === 45 && second <= 20) ||
+      (minute === 59) || (minute === 0 && second <= 20)
     );
 
     // Primary engine election
